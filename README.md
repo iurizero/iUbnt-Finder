@@ -13,12 +13,29 @@ O iUbnt-Finder é uma ferramenta Python que permite descobrir e analisar disposi
 - Versão do firmware
 - Nome da rede (ESSID)
 
+## ⚠️ Importante: Permissões
+
+**Esta ferramenta requer privilégios de root/administrador para funcionar corretamente.** Isso é necessário porque o programa precisa acessar diretamente as interfaces de rede para enviar e receber pacotes UDP.
+
+### Linux
+```bash
+# Execute com sudo
+sudo python3 iUbnt.py
+
+# Ou, se estiver usando um ambiente virtual
+sudo .venv/bin/python iUbnt.py
+```
+
+### Windows
+Execute o prompt de comando como administrador e então execute o script.
+
 ## 🚀 Instalação
 
 ### Pré-requisitos
 
 - Python 3.7 ou superior
 - pip (gerenciador de pacotes Python)
+- Privilégios de root/administrador
 
 ### Instalação das Dependências
 
@@ -40,11 +57,26 @@ O projeto requer as seguintes dependências:
 
 ## 🎯 Uso
 
-Para executar o scanner, simplesmente execute o script Python:
+Para executar o scanner, você **deve** usar privilégios de administrador:
 
 ```bash
-python3 iUbnt.py
+# Linux
+sudo python3 iUbnt.py
+
+# Se estiver usando ambiente virtual
+sudo .venv/bin/python iUbnt.py
+
+# Windows (como administrador)
+python iUbnt.py
 ```
+
+### Solução de Problemas Comuns
+
+Se você encontrar o erro "PermissionError: [Errno 1] Operation not permitted", isso significa que o script não está sendo executado com privilégios de administrador. Certifique-se de:
+
+1. Usar `sudo` no Linux
+2. Executar como administrador no Windows
+3. Verificar se seu usuário tem permissões de administrador
 
 ### Exemplo de Saída
 
@@ -72,9 +104,10 @@ MAC: 00:11:22:33:44:56
 
 ## 🔒 Observações de Segurança
 
-- A ferramenta requer privilégios de root/administrador para executar operações de rede
+- A ferramenta **requer** privilégios de root/administrador para executar operações de rede
 - Recomenda-se executar apenas em redes que você tem permissão para analisar
 - O scanner utiliza broadcast UDP na porta 10001
+- Nunca execute scripts Python com privilégios de administrador sem verificar o código fonte
 
 ## ⚠️ Limitações
 
