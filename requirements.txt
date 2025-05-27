@@ -1,0 +1,2 @@
+scapy>=2.5.0
+typing-extensions>=4.0.0 
