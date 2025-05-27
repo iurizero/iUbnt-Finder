@@ -1,109 +1,136 @@
 #!/usr/bin/env python3
 
-from random import choice
+import random as rnd
 from scapy.all import *
+from typing import Dict, List, Tuple, Any
+from dataclasses import dataclass
+from functools import reduce
 
-# Protocol constants for device identification
-PROTOCOL_MARKERS = {
-    'DEVICE_ID': '01',
-    'DEVICE_ID_EXT': '02',
-    'SOFTWARE_VERSION': '03',
-    'DEVICE_ALIAS': '0b',
-    'HARDWARE_CODE': '0c',
-    'WIRELESS_ID': '0d',
-    'HARDWARE_FULL': '14'
-}
+@dataclass
+class NetworkConfig:
+    broadcast_mac: str = "ff:ff:ff:ff:ff:ff"
+    broadcast_ip: str = "255.255.255.255"
+    target_port: int = 10001
+    min_port: int = 1024
+    max_port: int = 65535
+    timeout: int = 5
 
-# Network protocol parameters
-PROBE_MESSAGE = bytes.fromhex('01000000')
-RESPONSE_HEADER = '010000'
-SCAN_DURATION = 5
-
-def scan_network_devices():
-    # Disable IP address validation for broadcast
-    conf.checkIPaddr = False
+class ProtocolDecoder:
+    def __init__(self):
+        self._markers = {
+            'a': '01',  # Device ID
+            'b': '02',  # Extended ID
+            'c': '03',  # Version
+            'd': '0b',  # Name
+            'e': '0c',  # Model
+            'f': '0d',  # Network
+            'g': '14'   # Full Model
+        }
+        self._init_packet = bytes.fromhex('01000000')
+        self._valid_header = '010000'
     
-    # Construct network probe packet
-    probe = (
-        Ether(dst="ff:ff:ff:ff:ff:ff")/
-        IP(dst="255.255.255.255")/
-        UDP(sport=choice(range(1024, 65536)), dport=10001)/
-        Raw(PROBE_MESSAGE)
-    )
-    
-    # Send probe and collect responses
-    responses, _ = srp(
-        probe,
-        multi=True,
-        verbose=0,
-        timeout=SCAN_DURATION
-    )
+    def _create_probe(self, config: NetworkConfig) -> Packet:
+        sport = rnd.randint(config.min_port, config.max_port)
+        return (
+            Ether(dst=config.broadcast_mac)/
+            IP(dst=config.broadcast_ip)/
+            UDP(sport=sport, dport=config.target_port)/
+            Raw(self._init_packet)
+        )
 
-    found_devices = []
-    for _, response in responses:
-        data = response[IP].load
+    def _extract_device_data(self, packet_data: bytes) -> Dict[str, Any]:
+        if packet_data[0:3].hex() != self._valid_header:
+            return None
+
+        result = {}
+        pos = 3
+        remaining = int(packet_data[pos].hex(), 16) - 1
+        pos += 1
+
+        while remaining > 0:
+            marker = packet_data[pos].hex()
+            pos += 1
+            remaining -= 1
+
+            size = int(packet_data[pos:pos+2].hex(), 16)
+            pos += 2
+            remaining -= 2
+
+            value = packet_data[pos:pos+size].decode('utf-8', errors='ignore')
+            pos += size
+            remaining -= size
+
+            # Map markers to properties using a more complex approach
+            mapping = {
+                self._markers['d']: ('device_name', value),
+                self._markers['g']: ('product_model', value),
+                self._markers['e']: ('model_id', value),
+                self._markers['c']: ('build_version', value),
+                self._markers['f']: ('network_id', value)
+            }
+            
+            if marker in mapping:
+                key, val = mapping[marker]
+                result[key] = val
+
+        return result
+
+class NetworkScanner:
+    def __init__(self):
+        self.config = NetworkConfig()
+        self.decoder = ProtocolDecoder()
+        conf.checkIPaddr = False
+
+    def _process_response(self, response: Tuple[Packet, Packet]) -> Dict[str, Any]:
+        _, received = response
+        device_data = self.decoder._extract_device_data(received[IP].load)
         
-        # Validate response format
-        if data[0:3].hex() != RESPONSE_HEADER:
-            continue
+        if not device_data:
+            return None
 
-        device_info = {
-            'network_address': response[IP].src,
-            'hardware_id': response[Ether].src.upper()
+        return {
+            **device_data,
+            'ip_address': received[IP].src,
+            'mac_address': received[Ether].src.upper()
         }
 
-        # Parse response data
-        data_index = 3
-        data_length = int(data[data_index].hex(), 16)
-        data_index += 1
-        data_length -= 1
+    def scan(self) -> List[Dict[str, Any]]:
+        probe = self.decoder._create_probe(self.config)
+        responses, _ = srp(probe, multi=True, verbose=0, timeout=self.config.timeout)
+        
+        return list(filter(None, map(self._process_response, responses)))
 
-        while data_length > 0:
-            marker_type = data[data_index].hex()
-            data_index += 1
-            data_length -= 1
-            
-            segment_size = int(data[data_index:data_index+2].hex(), 16)
-            data_index += 2
-            data_length -= 2
-            
-            segment_data = data[data_index:data_index+segment_size].decode('utf-8', errors='ignore')
-            
-            # Map response data to device properties
-            if marker_type == PROTOCOL_MARKERS['DEVICE_ALIAS']:
-                device_info['alias'] = segment_data
-            elif marker_type == PROTOCOL_MARKERS['HARDWARE_FULL']:
-                device_info['hardware_model'] = segment_data
-            elif marker_type == PROTOCOL_MARKERS['HARDWARE_CODE']:
-                device_info['model_code'] = segment_data
-            elif marker_type == PROTOCOL_MARKERS['SOFTWARE_VERSION']:
-                device_info['version'] = segment_data
-            elif marker_type == PROTOCOL_MARKERS['WIRELESS_ID']:
-                device_info['wireless_name'] = segment_data
-                
-            data_index += segment_size
-            data_length -= segment_size
-
-        found_devices.append(device_info)
-
-    return found_devices
-
-def display_results():
-    print("\nIniciando varredura de rede...")
-    network_devices = scan_network_devices()
+def format_device_info(device: Dict[str, Any]) -> str:
+    template = """
+    === {model} ===
+    IP: {ip}
+    Nome: {name}
+    Modelo: {model_id}
+    Versão: {version}
+    Rede: {network}
+    MAC: {mac}
+    """
     
-    if network_devices:
-        print(f"\nDetectados {len(network_devices)} dispositivo(s):")
-        for device in network_devices:
-            print(f"\n--- [{device.get('hardware_model', 'N/A')}] ---")
-            print(f"  Endereço IP : {device.get('network_address', 'N/A')}")
-            print(f"  Apelido     : {device.get('alias', 'N/A')}")
-            print(f"  Código      : {device.get('model_code', 'N/A')}")
-            print(f"  Versão      : {device.get('version', 'N/A')}")
-            print(f"  Rede        : {device.get('wireless_name', 'N/A')}")
-            print(f"  ID Hardware : {device.get('hardware_id', 'N/A')}")
+    return template.format(
+        model=device.get('product_model', 'Desconhecido'),
+        ip=device.get('ip_address', 'N/A'),
+        name=device.get('device_name', 'N/A'),
+        model_id=device.get('model_id', 'N/A'),
+        version=device.get('build_version', 'N/A'),
+        network=device.get('network_id', 'N/A'),
+        mac=device.get('mac_address', 'N/A')
+    )
+
+def main():
+    print("\nIniciando análise de rede...")
+    scanner = NetworkScanner()
+    devices = scanner.scan()
+    
+    if devices:
+        print(f"\nDispositivos encontrados: {len(devices)}")
+        print(''.join(map(format_device_info, devices)))
     else:
-        print("\nNenhum dispositivo detectado na rede\n")
+        print("\nNenhum dispositivo localizado\n")
 
 if __name__ == "__main__":
-    display_results()
+    main()
